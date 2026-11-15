@@ -32,8 +32,8 @@
  *
  * The following code reads PNG image data from a file and writes it, in a
  * potentially new format, to a new file.  While this code will compile, there
- * is minimal (insufficient) error checking.  For a more realistic version,
- * see contrib/examples/pngtopng.c
+ * is minimal (insufficient) error checking.  For a version that preserves
+ * 16-bit precision and transparent RGB, see contrib/examples/pngtopng.c.
  */
 
 #include <stddef.h>
