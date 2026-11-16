@@ -17,6 +17,11 @@ check_PROGRAMS= pngtest pnggetset pngreadend pngunknown pngstest pngvalid pngima
 if HAVE_CLOCK_GETTIME
 check_PROGRAMS += timepng
 endif
+if HAVE_JXL
+check_PROGRAMS += pngjxl
+else
+check_PROGRAMS += pngjxl-unsupported
+endif
 else
 check_PROGRAMS=
 endif
@@ -55,6 +60,14 @@ pngimage_LDADD = libpng@PNGLIB_MAJOR@@PNGLIB_MINOR@.la
 
 timepng_SOURCES = contrib/libtests/timepng.c
 timepng_LDADD = libpng@PNGLIB_MAJOR@@PNGLIB_MINOR@.la
+
+if HAVE_JXL
+pngjxl_SOURCES = contrib/libtests/pngjxl.c
+pngjxl_LDADD = libpng@PNGLIB_MAJOR@@PNGLIB_MINOR@.la
+else
+pngjxl_unsupported_SOURCES = contrib/libtests/pngjxl-unsupported.c
+pngjxl_unsupported_LDADD = libpng@PNGLIB_MAJOR@@PNGLIB_MINOR@.la
+endif
 endif
 
 # Generally these are single line shell scripts to run a test with a particular
@@ -98,6 +111,12 @@ TESTS =\
    tests/pngunknown-vpAg\
    tests/pngimage-quick\
    tests/pngimage-full
+
+if HAVE_JXL
+TESTS += tests/pngjxl
+else
+TESTS += tests/pngjxl-unsupported
+endif
 endif
 
 # man pages
@@ -114,7 +133,7 @@ lib_LTLIBRARIES=libpng@PNGLIB_MAJOR@@PNGLIB_MINOR@.la
 libpng@PNGLIB_MAJOR@@PNGLIB_MINOR@_la_SOURCES = png.c pngerror.c\
 	pngget.c pngmem.c pngpread.c pngread.c pngrio.c pngrtran.c pngrutil.c\
 	pngset.c pngtrans.c pngwio.c pngwrite.c pngwtran.c pngwutil.c\
-	pngsimd.c\
+	pngsimd.c pngjxl.c\
 	png.h pngconf.h pngdebug.h pnginfo.h pngpriv.h pngstruct.h pngusr.dfa
 
 nodist_libpng@PNGLIB_MAJOR@@PNGLIB_MINOR@_la_SOURCES = pnglibconf.h
@@ -247,6 +266,8 @@ pngtest.o: pnglibconf.h
 contrib/libtests/makepng.o: pnglibconf.h
 contrib/libtests/pnggetset.o: pnglibconf.h
 contrib/libtests/pngimage.o: pnglibconf.h
+contrib/libtests/pngjxl.o: pnglibconf.h
+contrib/libtests/pngjxl-unsupported.o: pnglibconf.h
 contrib/libtests/pngreadend.o: pnglibconf.h
 contrib/libtests/pngstest.o: pnglibconf.h
 contrib/libtests/pngunknown.o: pnglibconf.h

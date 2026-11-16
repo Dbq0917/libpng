@@ -238,8 +238,13 @@ EXPORTS
  png_image_begin_read_from_memory
  png_image_finish_read
  png_image_free
+ png_image_get_error_class
+ png_image_get_icc_profile
  png_image_write_to_file
  png_image_write_to_stdio
+ png_image_write_jxl_to_file
+ png_image_write_jxl_to_stdio
+ png_image_write_jxl_to_memory
  png_convert_to_rfc1123_buffer
  png_set_check_for_invalid_index
  png_get_palette_max

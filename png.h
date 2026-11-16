@@ -2846,8 +2846,9 @@ typedef struct
     * an error were encountered, only the error is recorded.  If there
     * are multiple warnings, only the first one is recorded.
     *
-    * The upper 30 bits of this value are reserved, the low two bits contain
-    * a value as follows:
+    * The low two bits of this value contain a value as follows.  The upper 30
+    * bits are reserved; bits 2 through 5 hold an error class that is available
+    * through png_image_get_error_class().
     */
 #  define PNG_IMAGE_WARNING 1
 #  define PNG_IMAGE_ERROR 2
@@ -3131,6 +3132,54 @@ typedef png_image *png_imagep; /* [Deprecated] */
     * because that call initializes the 'flags' field.
     */
 
+#define PNG_IMAGE_FLAG_FORMAT_JPEGXL 0x08
+   /* The input image was a JPEG XL file.  Applications do not need to inspect
+    * this flag: png_image_begin_read_* already selected the correct decoder
+    * from the file contents.  It is available only as low-level information.
+    */
+
+/* PNG_IMAGE_ERROR_CLASS_*
+ *
+ * The low two bits of png_image::warning_or_error retain their historical
+ * meaning.  The error class is stored in the reserved upper bits and can be
+ * queried with png_image_get_error_class().
+ */
+#define PNG_IMAGE_ERROR_CLASS_SHIFT 2
+#define PNG_IMAGE_ERROR_CLASS_MASK  0x3cU
+
+typedef enum
+{
+   PNG_IMAGE_ERROR_CLASS_NONE = 0,
+   PNG_IMAGE_ERROR_CLASS_GENERAL = 1,
+   PNG_IMAGE_ERROR_CLASS_IO = 2,
+   PNG_IMAGE_ERROR_CLASS_UNSUPPORTED_FORMAT = 3,
+   PNG_IMAGE_ERROR_CLASS_CORRUPT_DATA = 4,
+   PNG_IMAGE_ERROR_CLASS_CODEC = 5
+} png_image_error_class;
+
+/* JPEG XL write options.
+ *
+ * Passing NULL to a JPEG XL write function selects lossless output.  When
+ * lossless is non-zero, quality is ignored.  Otherwise quality must be in the
+ * range 0..99; 100 is treated as lossless.
+ *
+ * If icc_profile is non-NULL it is embedded as the image color profile.  The
+ * profile returned by png_image_get_icc_profile() can be passed here directly
+ * to preserve the color information of a decoded image.  If it is NULL, the
+ * profile implied by png_image::format is used (sRGB, or linear sRGB for
+ * PNG_FORMAT_FLAG_LINEAR).
+ */
+#define PNG_IMAGE_JXL_OPTIONS_VERSION 1
+
+typedef struct
+{
+   png_uint_32 version;         /* Set to PNG_IMAGE_JXL_OPTIONS_VERSION */
+   int lossless;                /* Non-zero for mathematically lossless */
+   int quality;                 /* 0..99 when lossy */
+   const png_byte *icc_profile; /* Optional ICC profile */
+   size_t icc_profile_size;     /* Size of icc_profile in bytes */
+} png_image_jxl_options;
+
 #ifdef PNG_SIMPLIFIED_READ_SUPPORTED
 /* READ APIs
  * ---------
@@ -3194,6 +3243,26 @@ PNG_EXPORT(void, png_image_free,
    (png_image *image));
    /* Free any data allocated by libpng in image->opaque, setting the pointer to
     * NULL.  May be called at any time after the structure is initialized.
+    */
+
+PNG_EXPORT(png_uint_32, png_image_get_error_class,
+   (const png_image *image));
+   /* Return the detailed class of the last read or write error.  The return
+    * value is one of the PNG_IMAGE_ERROR_CLASS_* values.  A generic libpng
+    * error is reported as PNG_IMAGE_ERROR_CLASS_GENERAL.
+    */
+
+PNG_EXPORT(int, png_image_get_icc_profile,
+   (png_image *image, void *profile, size_t *profile_size));
+   /* Return the ICC profile associated with a decoded image.  If profile is
+    * NULL, *profile_size is set to the required size and no data is copied.
+    * If profile is not NULL, *profile_size must contain the available buffer
+    * size; on success it is updated with the number of bytes written.
+    *
+    * This must be called after png_image_begin_read_* and before
+    * png_image_free().  For JPEG XL images the profile remains available after
+    * png_image_finish_read().  If no ICC profile is present, *profile_size is
+    * set to zero and the function succeeds.
     */
 #endif /* SIMPLIFIED_READ */
 
@@ -3338,6 +3407,43 @@ PNG_EXPORT(int, png_image_write_to_memory,
     * overflow even though PNG_IMAGE_DATA_SIZE does not overflow; the write will
     * run out of buffer space but return a corrected size which should work.
     */
+
+/* JPEG XL write APIs.
+ *
+ * These APIs write JPEG XL instead of PNG and expose the quality/lossless
+ * setting.  The original png_image_write_* APIs remain PNG writers for PNG
+ * input; for images read from JPEG XL they transparently write JPEG XL using
+ * the lossless default.  The input buffer uses exactly the same png_image
+ * format conventions as the PNG APIs, including 8-bit sRGB and 16-bit linear
+ * formats, BGR/AFIRST layouts and positive or negative strides.  Color-map
+ * input is not supported by the JPEG XL writer.  A write to a non-NULL
+ * destination releases image->opaque, as the PNG write APIs do; a NULL
+ * destination size query retains it for the following write.
+ */
+PNG_EXPORT(int, png_image_write_jxl_to_memory,
+   (png_image *image, void *memory, png_alloc_size_t *memory_bytes,
+    const void *buffer, png_int_32 row_stride, const void *colormap,
+    const png_image_jxl_options *options));
+
+#ifdef PNG_SIMPLIFIED_WRITE_STDIO_SUPPORTED
+PNG_EXPORT(int, png_image_write_jxl_to_stdio,
+   (png_image *image, FILE *file, const void *buffer, png_int_32 row_stride,
+    const void *colormap, const png_image_jxl_options *options));
+
+PNG_EXPORT(int, png_image_write_jxl_to_file,
+   (png_image *image, const char *file_name, const void *buffer,
+    png_int_32 row_stride, const void *colormap,
+    const png_image_jxl_options *options));
+#endif
+
+/* Alternate spellings, kept for source compatibility with callers that use
+ * the png_image_write_to_<destination>_<format> convention.
+ */
+#define png_image_write_to_memory_jxl png_image_write_jxl_to_memory
+#ifdef PNG_SIMPLIFIED_WRITE_STDIO_SUPPORTED
+#  define png_image_write_to_stdio_jxl png_image_write_jxl_to_stdio
+#  define png_image_write_to_file_jxl png_image_write_jxl_to_file
+#endif
 #endif /* SIMPLIFIED_WRITE */
 /*******************************************************************************
  *  END OF SIMPLIFIED API

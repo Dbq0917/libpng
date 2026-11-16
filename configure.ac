@@ -99,6 +99,12 @@ AC_ARG_ENABLE([tests],
 AM_CONDITIONAL([ENABLE_TESTS],
    [test "$enable_tests" != "no"])
 
+AC_ARG_ENABLE([jxl],
+   AS_HELP_STRING([--enable-jxl],
+      [enable JPEG XL support if libjxl is available]),
+      [enable_jxl="$enableval"],
+      [enable_jxl=auto])
+
 # -Werror cannot be passed to GCC in CFLAGS because configure will fail
 # (it checks the compiler with a program that generates a warning).
 # Add the following option to deal with this:
@@ -183,6 +189,30 @@ int main(void) { return 0; }
 # library (typically), it's not an error if it is not found.
 AC_CHECK_LIB([m], [feenableexcept])
 AC_CHECK_FUNCS([feenableexcept])
+
+dnl Optional JPEG XL support for the simplified image API.
+have_jxl=no
+if test "$enable_jxl" != "no"; then
+  AC_CHECK_HEADERS([jxl/decode.h jxl/encode.h jxl/cms.h], [],
+     [have_jxl=no])
+  if test "$ac_cv_header_jxl_decode_h" = "yes" &&
+     test "$ac_cv_header_jxl_encode_h" = "yes" &&
+     test "$ac_cv_header_jxl_cms_h" = "yes"; then
+    AC_CHECK_LIB([jxl_cms], [JxlGetDefaultCms], [],
+       [have_jxl=no])
+    AC_CHECK_LIB([jxl], [JxlDecoderCreate], [have_jxl=yes],
+       [have_jxl=no])
+  fi
+fi
+
+if test "$have_jxl" = "yes"; then
+  AC_DEFINE([PNG_JXL_SUPPORTED], [1],
+     [Define to enable JPEG XL support in the simplified image API])
+elif test "$enable_jxl" = "yes"; then
+  AC_MSG_ERROR([JPEG XL support requested but libjxl was not found])
+fi
+
+AM_CONDITIONAL([HAVE_JXL], [test "$have_jxl" = "yes"])
 
 AC_MSG_CHECKING([if using Solaris linker])
 SLD=`$LD --version 2>&1 | grep Solaris`

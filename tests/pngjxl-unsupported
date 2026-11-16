@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# JPEG XL disabled-build error classification test.
+exec ./pngjxl-unsupported

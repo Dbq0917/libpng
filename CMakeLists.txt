@@ -86,6 +86,10 @@ endif()
 # at any time.
 option(PNG_TESTS "Build the libpng tests" ON)
 
+# JPEG XL is optional.  When it is available, the simplified image API also
+# accepts JPEG XL input and the JPEG XL write APIs are enabled.
+option(PNG_JXL "Enable JPEG XL support when the library is available" ON)
+
 # Allow the users to switch on/off the use of hardware (SIMD) optimized code.
 option(PNG_HARDWARE_OPTIMIZATIONS "Enable hardware optimizations" ON)
 
@@ -128,6 +132,39 @@ if(UNIX AND NOT (APPLE OR BEOS OR HAIKU OR EMSCRIPTEN))
 endif()
 if(PNG_HAVE_LIBM_POW)
   list(APPEND PNG_LINK_LIBRARIES m)
+endif()
+
+set(PNG_JXL_FOUND FALSE)
+if(PNG_JXL)
+  find_package(PkgConfig QUIET)
+
+  if(PkgConfig_FOUND)
+    pkg_check_modules(JXL QUIET libjxl libjxl_cms)
+  endif()
+
+  if(JXL_FOUND)
+    set(PNG_JXL_FOUND TRUE)
+    include_directories(SYSTEM ${JXL_INCLUDE_DIRS})
+    list(APPEND PNG_LINK_LIBRARIES ${JXL_LIBRARIES})
+  else()
+    find_path(JXL_INCLUDE_DIR NAMES jxl/decode.h)
+    find_library(JXL_LIBRARY NAMES jxl)
+    find_library(JXL_CMS_LIBRARY NAMES jxl_cms)
+
+    if(JXL_INCLUDE_DIR AND JXL_LIBRARY AND JXL_CMS_LIBRARY)
+      set(PNG_JXL_FOUND TRUE)
+      include_directories(SYSTEM "${JXL_INCLUDE_DIR}")
+      list(APPEND PNG_LINK_LIBRARIES
+           "${JXL_LIBRARY}" "${JXL_CMS_LIBRARY}")
+    endif()
+  endif()
+
+  if(PNG_JXL_FOUND)
+    add_definitions(-DPNG_JXL_SUPPORTED)
+    message(STATUS "Found JPEG XL support")
+  else()
+    message(STATUS "JPEG XL support requested but libjxl was not found")
+  endif()
 endif()
 
 # Silence function deprecation warnings on the Windows compilers that might
@@ -359,6 +396,7 @@ set(libpng_sources
     pngwtran.c
     pngwutil.c
     pngsimd.c
+    pngjxl.c
 )
 
 set(pngtest_sources
@@ -381,6 +419,12 @@ set(pngunknown_sources
 )
 set(pngimage_sources
     contrib/libtests/pngimage.c
+)
+set(pngjxl_sources
+    contrib/libtests/pngjxl.c
+)
+set(pngjxl_unsupported_sources
+    contrib/libtests/pngjxl-unsupported.c
 )
 
 # Now build our targets.
@@ -751,6 +795,23 @@ if(PNG_TESTS AND PNG_SHARED)
                COMMAND pngimage
                OPTIONS --exhaustive --list-combos --log
                FILES ${PNGSUITE_PNGS})
+
+  if(PNG_JXL_FOUND)
+    # JPEG XL roundtrip, color profile and error classification tests.
+    add_executable(pngjxl ${pngjxl_sources})
+    target_link_libraries(pngjxl
+                          PRIVATE png_shared)
+
+    png_add_test(NAME pngjxl
+                 COMMAND pngjxl)
+  else()
+    add_executable(pngjxl-unsupported ${pngjxl_unsupported_sources})
+    target_link_libraries(pngjxl-unsupported
+                          PRIVATE png_shared)
+
+    png_add_test(NAME pngjxl-unsupported
+                 COMMAND pngjxl-unsupported)
+  endif()
 endif()
 
 # Create a symlink that points to a target file (if symlinking is possible),
@@ -836,6 +897,9 @@ if(NOT WIN32 OR CYGWIN OR MINGW)
   set(libdir "${CMAKE_INSTALL_FULL_LIBDIR}")
   set(includedir "${CMAKE_INSTALL_FULL_INCLUDEDIR}")
   set(LIBS "-lz -lm")
+  if(PNG_JXL_FOUND)
+    string(APPEND LIBS " -ljxl_cms -ljxl")
+  endif()
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/libpng.pc.in"
                  "${CMAKE_CURRENT_BINARY_DIR}/libpng${PNGLIB_ABI_VERSION}.pc"
                  @ONLY)

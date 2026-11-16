@@ -2304,6 +2304,18 @@ png_image_write_to_memory(png_image *image, void *memory,
    {
       if (memory_bytes != NULL && buffer != NULL)
       {
+         if ((image->flags & PNG_IMAGE_FLAG_FORMAT_JPEGXL) != 0 &&
+             image->opaque != NULL && image->opaque->jxl != NULL)
+         {
+            int jxl_result = png_image_write_jxl_to_memory(image, memory,
+                memory_bytes, buffer, row_stride, colormap, NULL);
+
+            if (memory != NULL)
+               png_image_free(image);
+
+            return jxl_result;
+         }
+
          /* This is to give the caller an easier error detection in the NULL
           * case and guard against uninitialized variable problems:
           */
@@ -2370,6 +2382,16 @@ png_image_write_to_stdio(png_image *image, FILE *file, int convert_to_8bit,
    {
       if (file != NULL && buffer != NULL)
       {
+         if ((image->flags & PNG_IMAGE_FLAG_FORMAT_JPEGXL) != 0 &&
+             image->opaque != NULL && image->opaque->jxl != NULL)
+         {
+            int jxl_result = png_image_write_jxl_to_stdio(image, file, buffer,
+                row_stride, colormap, NULL);
+
+            png_image_free(image);
+            return jxl_result;
+         }
+
          if (png_image_write_init(image) != 0)
          {
             png_image_write_control display;
@@ -2418,9 +2440,21 @@ png_image_write_to_file(png_image *image, const char *file_name,
    /* Write the image to the named file. */
    if (image != NULL && image->version == PNG_IMAGE_VERSION)
    {
+      FILE *fp;
+
       if (file_name != NULL && buffer != NULL)
       {
-         FILE *fp = fopen(file_name, "wb");
+         if ((image->flags & PNG_IMAGE_FLAG_FORMAT_JPEGXL) != 0 &&
+             image->opaque != NULL && image->opaque->jxl != NULL)
+         {
+            int jxl_result = png_image_write_jxl_to_file(image, file_name,
+                buffer, row_stride, colormap, NULL);
+
+            png_image_free(image);
+            return jxl_result;
+         }
+
+         fp = fopen(file_name, "wb");
 
          if (fp != NULL)
          {

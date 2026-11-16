@@ -3750,7 +3750,10 @@ V. Simplified API
 The simplified API, which became available in libpng-1.6.0, hides the details
 of both libpng and the PNG file format itself.
 It allows PNG files to be read into a very limited number of
-in-memory bitmap formats or to be written from the same formats.  If these
+in-memory bitmap formats or to be written from the same formats.  When libpng
+is built with JPEG XL support, the read APIs also accept JPEG XL files.  The
+format is selected from the input bytes, not from a file name or extension, so
+PNG and JPEG XL inputs can be mixed in the same batch.  If these
 formats do not accommodate your needs then you can, and should, use the more
 sophisticated APIs above - these support a wide variety of in-memory formats
 and a wide variety of sophisticated transformations to those formats as well
@@ -3812,14 +3815,20 @@ a '\0' terminated string with the libpng error or warning message.  If both
 warnings and an error were encountered, only the error is recorded.  If there
 are multiple warnings, only the first one is recorded.
 
-The upper 30 bits of the "warning_or_error" value are reserved; the low two
-bits contain a two bit code such that a value more than 1 indicates a failure
-in the API just called:
+The low two bits of the "warning_or_error" value contain a two bit code such
+that a value more than 1 indicates a failure in the API just called:
 
    0 - no warning or error
    1 - warning
    2 - error
    3 - error preceded by warning
+
+The upper bits are reserved.  Bits 2 through 5 hold an error class that can be
+queried with png_image_get_error_class().  The classes include
+PNG_IMAGE_ERROR_CLASS_UNSUPPORTED_FORMAT and
+PNG_IMAGE_ERROR_CLASS_CORRUPT_DATA, which allows the caller to distinguish an
+unknown or disabled codec from damaged data.  Generic PNG errors retain the
+historical value of the "warning_or_error" field.
 
 The pixels (samples) of the image have one to four channels whose components
 have original values in the range 0 to 1.0:
@@ -4060,6 +4069,10 @@ the 'flags' field of png_image.
     NOTE: the flag can only be set after the png_image_begin_read_ call,
     because that call initializes the 'flags' field.
 
+  PNG_IMAGE_FLAG_FORMAT_JPEGXL == 0x08
+    This indicates that the input was decoded as JPEG XL.  Applications do not
+    need to check this flag because format selection is automatic.
+
 READ APIs
 
    The png_image passed to the read APIs must have been initialized by setting
@@ -4068,16 +4081,16 @@ READ APIs
    int png_image_begin_read_from_file(png_image *image, const char *file_name)
 
       The named file is opened for read and the image header
-      is filled in from the PNG header in the file.
+      is filled in from the PNG or JPEG XL header in the file.
 
    int png_image_begin_read_from_stdio(png_image *image, FILE *file)
 
-      The PNG header is read from the stdio FILE object.
+      The image header is read from the stdio FILE object.
 
    int png_image_begin_read_from_memory(png_image *image,
       const void *memory, size_t size)
 
-      The PNG header is read from the given memory buffer.
+      The image header is read from the given memory buffer.
 
    int png_image_finish_read(png_image *image,
       png_color *background, void *buffer,
@@ -4107,6 +4120,20 @@ READ APIs
       Free any data allocated by libpng in image->opaque,
       setting the pointer to NULL.  May be called at any time
       after the structure is initialized.
+
+   png_uint_32 png_image_get_error_class(const png_image *image)
+
+      Return the detailed class of the last error.  The value is one of the
+      PNG_IMAGE_ERROR_CLASS_* constants.
+
+   int png_image_get_icc_profile(png_image *image, void *profile,
+      size_t *profile_size)
+
+      Return the ICC profile of a decoded image.  If profile is NULL, only the
+      required size is returned.  For JPEG XL this can be called after
+      png_image_finish_read() and before png_image_free().  The profile can be
+      supplied to png_image_jxl_options when writing JPEG XL to preserve the
+      original color information.
 
 When the simplified API needs to convert between sRGB and linear colorspaces,
 the actual sRGB transfer curve defined in the sRGB specification (see the
@@ -4146,6 +4173,35 @@ be written:
       png_int_32 row_stride, const void *colormap)
 
       Write the image to the given FILE object.
+
+JPEG XL write APIs
+
+Input format detection is automatic.  For PNG input the original write APIs
+above always produce PNG and their behavior is unchanged.  For JPEG XL input,
+the original write APIs transparently produce lossless JPEG XL, so a read/write
+roundtrip does not require the caller to inspect the input format.  Use the
+following APIs when a lossy quality setting or explicit JPEG XL output is
+required.  They use the same pixel formats and strides:
+
+   int png_image_write_jxl_to_memory(png_image *image, void *memory,
+      png_alloc_size_t *memory_bytes, const void *buffer,
+      png_int_32 row_stride, const void *colormap,
+      const png_image_jxl_options *options)
+
+   int png_image_write_jxl_to_stdio(png_image *image, FILE *file,
+      const void *buffer, png_int_32 row_stride, const void *colormap,
+      const png_image_jxl_options *options)
+
+   int png_image_write_jxl_to_file(png_image *image, const char *file,
+      const void *buffer, png_int_32 row_stride, const void *colormap,
+      const png_image_jxl_options *options)
+
+Passing NULL options selects mathematically lossless output.  Otherwise set
+options.version to PNG_IMAGE_JXL_OPTIONS_VERSION, set options.lossless for the
+lossless mode, or set options.quality to a value in the range 0..99 for lossy
+mode.  A quality of 100 is treated as lossless.  options.icc_profile and
+options.icc_profile_size attach an ICC profile; this is how the profile
+returned by png_image_get_icc_profile() is carried through a roundtrip.
 
 With all write APIs if image is in one of the linear formats with
 (png_uint_16) data then setting convert_to_8_bit will cause the output to be

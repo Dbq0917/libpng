@@ -1421,6 +1421,9 @@ png_image_read_header(void *argument)
    return 1;
 }
 
+static void
+png_image_prefix_read(png_struct *png_ptr, png_byte *out, size_t need);
+
 #ifdef PNG_STDIO_SUPPORTED
 int
 png_image_begin_read_from_stdio(png_image *image, FILE *file)
@@ -1431,6 +1434,45 @@ png_image_begin_read_from_stdio(png_image *image, FILE *file)
       {
          if (png_image_read_init(image) != 0)
          {
+            png_byte signature[12];
+            size_t signature_size;
+            int jxl;
+            int rewind_ok;
+            long start = ftell(file);
+
+            signature_size = fread(signature, 1, sizeof signature, file);
+
+            rewind_ok = start >= 0 && fseek(file, start, SEEK_SET) == 0;
+
+            if (rewind_ok == 0)
+               clearerr(file);
+
+            jxl = png_image_jxl_probe(signature, signature_size);
+
+            if (jxl != 0)
+            {
+               if (rewind_ok != 0)
+                  return png_image_jxl_read_stdio(image, file);
+
+               return png_image_jxl_read_stdio_prefix(image, file, signature,
+                   signature_size);
+            }
+
+            if (signature_size >= 8 &&
+                png_sig_cmp(signature, 0, 8) != 0)
+               return png_image_unsupported_format(image, NULL);
+
+            if (rewind_ok == 0)
+            {
+               image->opaque->png_ptr->io_ptr = image;
+               image->opaque->png_ptr->read_data_fn = png_image_prefix_read;
+               image->opaque->stdio_file = file;
+               image->opaque->prefix_size = signature_size;
+               image->opaque->prefix_pos = 0;
+               memcpy(image->opaque->prefix, signature, signature_size);
+               return png_safe_execute(image, png_image_read_header, image);
+            }
+
             /* This is slightly evil, but png_init_io doesn't do anything other
              * than this and we haven't changed the standard IO functions so
              * this saves a 'safe' function.
@@ -1465,8 +1507,46 @@ png_image_begin_read_from_file(png_image *image, const char *file_name)
          {
             if (png_image_read_init(image) != 0)
             {
-               image->opaque->png_ptr->io_ptr = fp;
+               png_byte signature[12];
+               size_t signature_size;
+               int jxl;
+               int rewind_ok;
+
+               signature_size = fread(signature, 1, sizeof signature, fp);
+               rewind_ok = fseek(fp, 0, SEEK_SET) == 0;
+
+               if (rewind_ok == 0)
+                  clearerr(fp);
+
                image->opaque->owned_file = 1;
+               image->opaque->stdio_file = fp;
+               jxl = png_image_jxl_probe(signature, signature_size);
+
+               if (jxl != 0)
+               {
+                  if (rewind_ok != 0)
+                     return png_image_jxl_read_stdio(image, fp);
+
+                  return png_image_jxl_read_stdio_prefix(image, fp,
+                      signature, signature_size);
+               }
+
+               if (signature_size >= 8 &&
+                   png_sig_cmp(signature, 0, 8) != 0)
+                  return png_image_unsupported_format(image, NULL);
+
+               if (rewind_ok == 0)
+               {
+                  image->opaque->png_ptr->io_ptr = image;
+                  image->opaque->png_ptr->read_data_fn = png_image_prefix_read;
+                  image->opaque->stdio_file = fp;
+                  image->opaque->prefix_size = signature_size;
+                  image->opaque->prefix_pos = 0;
+                  memcpy(image->opaque->prefix, signature, signature_size);
+                  return png_safe_execute(image, png_image_read_header, image);
+               }
+
+               image->opaque->png_ptr->io_ptr = fp;
                return png_safe_execute(image, png_image_read_header, image);
             }
 
@@ -1521,6 +1601,48 @@ png_image_memory_read(png_struct *png_ptr, png_byte *out, size_t need)
    }
 }
 
+/* Reader used when a stdio stream cannot be rewound after signature probing.
+ * The bytes already inspected are returned first, followed by the rest of the
+ * stream.  This preserves the historical behavior of the simplified API on
+ * pipes and other non-seekable FILE objects.
+ */
+static void
+png_image_prefix_read(png_struct *png_ptr, png_byte *out, size_t need)
+{
+   if (png_ptr != NULL)
+   {
+      png_image *image = png_voidcast(png_image *, png_ptr->io_ptr);
+
+      if (image != NULL && image->opaque != NULL)
+      {
+         png_control *cp = image->opaque;
+
+         if (cp->prefix_pos < cp->prefix_size)
+         {
+            size_t available = cp->prefix_size - cp->prefix_pos;
+            size_t count = need < available ? need : available;
+
+            memcpy(out, cp->prefix + cp->prefix_pos, count);
+            cp->prefix_pos += count;
+            out += count;
+            need -= count;
+         }
+
+         if (need > 0)
+         {
+            FILE *file = png_voidcast(FILE *, cp->stdio_file);
+
+            if (file == NULL || fread(out, 1, need, file) != need)
+               png_error(png_ptr, "read beyond end of data");
+         }
+
+         return;
+      }
+   }
+
+   png_error(png_ptr, "invalid stdio read");
+}
+
 int png_image_begin_read_from_memory(png_image *image,
     const void *memory, size_t size)
 {
@@ -1530,6 +1652,17 @@ int png_image_begin_read_from_memory(png_image *image,
       {
          if (png_image_read_init(image) != 0)
          {
+            int jxl = png_image_jxl_probe(
+                png_voidcast(const png_byte *, memory), size);
+
+            if (jxl != 0)
+               return png_image_jxl_read_memory(image,
+                   png_voidcast(const png_byte *, memory), size);
+
+            if (size >= 8 && png_sig_cmp(
+                png_voidcast(const png_byte *, memory), 0, 8) != 0)
+               return png_image_unsupported_format(image, NULL);
+
             /* Now set the IO functions to read from the memory buffer and
              * store it into io_ptr.  Again do this in-place to avoid calling a
              * libpng function that requires error handling.
@@ -4235,6 +4368,10 @@ png_image_finish_read(png_image *image, const png_color *background,
                {
                   int result;
                   png_image_read_control display;
+
+                  if (image->opaque->jxl != NULL)
+                     return png_image_jxl_finish_read(image, background,
+                         buffer, row_stride);
 
                   memset(&display, 0, (sizeof display));
                   display.image = image;

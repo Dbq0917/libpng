@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# JPEG XL roundtrip, color profile and error classification test.
+exec ./pngjxl

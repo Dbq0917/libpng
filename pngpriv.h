@@ -1991,9 +1991,14 @@ struct png_control_def
    png_struct *png_ptr;
    png_info   *info_ptr;
    void       *error_buf;           /* Currently this can only be jmp_buf */
+   void       *jxl;                 /* JPEG XL decoder state, if any */
 
    const png_byte *memory;          /* Memory buffer */
    size_t          size;            /* Size of the memory buffer */
+   png_byte        prefix[12];      /* Stream bytes already inspected */
+   size_t          prefix_size;     /* Number of valid prefix bytes */
+   size_t          prefix_pos;      /* Next prefix byte to return */
+   void           *stdio_file;      /* FILE used by the prefix reader */
 
    unsigned int for_write       :1; /* Otherwise it is a read structure */
    unsigned int owned_file      :1; /* We own the file in io_ptr */
@@ -2033,6 +2038,45 @@ PNG_INTERNAL_FUNCTION(int, png_safe_execute,
  */
 PNG_INTERNAL_FUNCTION(int, png_image_error,
    (png_image *image, const char *error_message),
+   PNG_EMPTY);
+
+/* JPEG XL support for the simplified API.  These functions are always built;
+ * when JPEG XL support is disabled they report an unsupported format.
+ */
+PNG_INTERNAL_FUNCTION(int, png_image_jxl_probe,
+   (const png_byte *memory, size_t size),
+   PNG_EMPTY);
+
+PNG_INTERNAL_FUNCTION(int, png_image_jxl_read_memory,
+   (png_image *image, const png_byte *memory, size_t size),
+   PNG_EMPTY);
+
+#ifdef PNG_STDIO_SUPPORTED
+PNG_INTERNAL_FUNCTION(int, png_image_jxl_read_stdio,
+   (png_image *image, FILE *file),
+   PNG_EMPTY);
+
+PNG_INTERNAL_FUNCTION(int, png_image_jxl_read_stdio_prefix,
+   (png_image *image, FILE *file, const png_byte *prefix,
+    size_t prefix_size),
+   PNG_EMPTY);
+#endif
+
+PNG_INTERNAL_FUNCTION(int, png_image_jxl_finish_read,
+   (png_image *image, const png_color *background, void *buffer,
+    png_int_32 row_stride),
+   PNG_EMPTY);
+
+PNG_INTERNAL_FUNCTION(void, png_image_jxl_finish,
+   (png_image *image),
+   PNG_EMPTY);
+
+PNG_INTERNAL_FUNCTION(void, png_image_jxl_free,
+   (void *jxl),
+   PNG_EMPTY);
+
+PNG_INTERNAL_FUNCTION(int, png_image_unsupported_format,
+   (png_image *image, const char *format_name),
    PNG_EMPTY);
 
 #ifndef PNG_SIMPLIFIED_READ_SUPPORTED
