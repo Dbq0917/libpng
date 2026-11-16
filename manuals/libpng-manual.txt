@@ -2194,6 +2194,59 @@ important for png_set_interlace_handling() - if you are going to call
 png_read_update_info() you must call png_set_interlace_handling() before
 it unless you want to receive interlaced output.
 
+Decoder-integrated downsampling
+
+When the display size is much smaller than the source image, a viewer can
+ask libpng to perform box filtering while decoding.  Call
+png_set_downsample() after png_read_info() and before
+png_read_update_info() or png_start_read_image():
+
+    png_set_downsample(png_ptr, display_width, display_height);
+    png_read_update_info(png_ptr, info_ptr);
+
+The requested dimensions may be any value from 1x1 up to the source
+dimensions; no fixed set of scale factors is used.  After
+png_read_update_info(), png_get_image_width(), png_get_image_height() and
+png_get_rowbytes() describe the downsampled image, and png_read_image()
+reads exactly the requested number of rows.
+
+The library accumulates each transformed source row into target-sized
+storage.  It does not allocate a source-sized image.  The working set is
+target width * target height * channels * sizeof(png_alloc_size_t), plus
+the completed target image.  png_get_downsample_memory() returns an
+estimate suitable for queue admission control:
+
+    size_t bytes = png_get_downsample_memory(png_ptr);
+
+An image queue should reserve that amount before starting the decode and
+release it after the result has been handed to the renderer or inserted in
+the cache.  This keeps the sum of concurrent decoder working sets inside a
+fixed memory budget instead of scaling with the source dimensions.
+
+For png_read_row() and png_read_rows(), call once per output row.  The
+first call consumes and validates the complete source image, including
+all Adam7 passes for an interlaced image.  Pixels from all passes are
+combined before filtering.  The finished rows are then available from the
+internal target image.  A truncated or corrupt stream therefore cannot
+expose a partial image: the application buffer is not written until the
+whole IDAT stream has been decoded successfully.
+
+Palette, packed sub-8-bit grayscale and tRNS inputs are expanded before
+filtering.  A 16-bit source remains 16-bit; otherwise the result is 8-bit
+grayscale, RGB or RGBA as selected by the active transforms.  Rows use the
+normal PNG byte order, so they can be uploaded directly as a texture.
+
+The existing png_set_read_status_fn() callback still runs for every source
+row actually decoded.  An image queue can use (row_number, pass) to report
+progress and to throttle work while png_read_row() is consuming the source
+image.
+
+A cache in front of the decoder should use a key containing the source
+identity and version, all read transforms, the non-zero downsampled
+dimensions and the libpng version.  Cache the completed target image, not
+the png_struct.  A cache hit can return the texture directly without
+calling the decoder again.
+
 Reading image data
 
 After you've allocated memory, you can read the image data.

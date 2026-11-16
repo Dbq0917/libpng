@@ -4544,6 +4544,318 @@ png_read_finish_IDAT(png_struct *png_ptr)
    }
 }
 
+#ifdef PNG_READ_DOWNSAMPLE_SUPPORTED
+/* Divide a 32-bit product by a 32-bit denominator without overflowing on
+ * platforms where size_t is only 32 bits.  The caller guarantees a <= divisor;
+ * b is the multiplier.  Both the quotient and remainder are returned.
+ */
+static void
+png_downsample_divmod(png_uint_32 a, png_uint_32 b, png_uint_32 divisor,
+    png_uint_32 *quotient, png_uint_32 *remainder)
+{
+   png_uint_32 q = 0;
+   png_uint_32 r = 0;
+   int i;
+
+   for (i = 31; i >= 0; --i)
+   {
+      q <<= 1;
+
+      if (r >= divisor - r)
+      {
+         r -= divisor - r;
+         q++;
+      }
+
+      else
+         r <<= 1;
+
+      if ((b & (1U << i)) != 0)
+      {
+         if (r >= divisor - a)
+         {
+            r -= divisor - a;
+            q++;
+         }
+
+         else
+            r += a;
+      }
+   }
+
+   *quotient = q;
+   *remainder = r;
+}
+
+static void
+png_downsample_init(png_struct *png_ptr, const png_row_info *row_info)
+{
+   png_alloc_size_t pixels;
+   png_alloc_size_t elements;
+   png_alloc_size_t source_area;
+   png_alloc_size_t max_sample;
+   size_t rowbytes;
+
+   if (row_info->bit_depth != 8 && row_info->bit_depth != 16)
+      png_error(png_ptr, "unsupported bit depth for downsampling");
+
+   if (row_info->channels == 0 ||
+       row_info->pixel_depth != row_info->channels * row_info->bit_depth)
+      png_error(png_ptr, "invalid transformed row for downsampling");
+
+   if (png_ptr->downsample_width > PNG_SIZE_MAX / png_ptr->downsample_height ||
+       png_ptr->width > PNG_SIZE_MAX / png_ptr->height)
+      png_error(png_ptr, "downsampling dimensions overflow");
+
+   pixels = (png_alloc_size_t)png_ptr->downsample_width *
+       png_ptr->downsample_height;
+   source_area = (png_alloc_size_t)png_ptr->width * png_ptr->height;
+
+   if (pixels > PNG_SIZE_MAX / row_info->channels ||
+       row_info->channels > PNG_SIZE_MAX / sizeof(png_alloc_size_t))
+      png_error(png_ptr, "downsampling accumulator is too large");
+
+   elements = pixels * row_info->channels;
+   if (elements > PNG_SIZE_MAX / sizeof(png_alloc_size_t))
+      png_error(png_ptr, "downsampling accumulator is too large");
+
+   max_sample = row_info->bit_depth == 16 ? 65535U : 255U;
+   if (source_area > (PNG_SIZE_MAX - source_area / 2) / max_sample)
+      png_error(png_ptr, "downsampling accumulator overflow");
+
+   rowbytes = PNG_ROWBYTES(row_info->pixel_depth,
+       png_ptr->downsample_width);
+   if (png_ptr->downsample_height > PNG_SIZE_MAX / rowbytes)
+      png_error(png_ptr, "downsampled image is too large");
+
+   png_ptr->downsample_sum = (png_alloc_size_t *)png_calloc(png_ptr,
+       elements * sizeof(png_alloc_size_t));
+   png_ptr->downsample_image = (png_byte *)png_malloc(png_ptr,
+       rowbytes * png_ptr->downsample_height);
+   png_ptr->downsample_rowbytes = rowbytes;
+   png_ptr->downsample_channels = row_info->channels;
+   png_ptr->downsample_bit_depth = row_info->bit_depth;
+}
+
+void /* PRIVATE */
+png_downsample_row(png_struct *png_ptr, const png_row_info *row_info,
+    const png_byte *row)
+{
+   png_uint_32 pass_start_x = 0;
+   png_uint_32 pass_inc_x = 1;
+   png_uint_32 source_y;
+   png_uint_32 target_y;
+   png_uint_32 x_offset;
+   png_uint_32 y_offset;
+   png_uint_32 target_x;
+   png_uint_32 x_unit;
+   png_uint_32 y_unit;
+   png_uint_32 width;
+   png_uint_32 channels;
+   png_uint_32 i;
+   png_uint_32 steps;
+
+   if (png_ptr->downsample_sum == NULL)
+      png_downsample_init(png_ptr, row_info);
+
+   if (png_ptr->downsample_bit_depth != row_info->bit_depth ||
+       png_ptr->downsample_channels != row_info->channels)
+      png_error(png_ptr, "downsampling row format changed");
+
+   if (png_ptr->interlaced != 0)
+   {
+      if (png_ptr->pass >= 7)
+         png_error(png_ptr, "invalid interlacing pass in downsampling");
+
+      pass_start_x = png_pass_start[png_ptr->pass];
+      pass_inc_x = png_pass_inc[png_ptr->pass];
+   }
+
+   /* With PNG_INTERLACE enabled row_number is already the source y
+    * coordinate; the pass only selects which x coordinates are present.
+    */
+   source_y = png_ptr->row_number;
+   if (source_y >= png_ptr->height)
+      png_error(png_ptr, "invalid source row in downsampling");
+
+   x_unit = png_ptr->downsample_width;
+   y_unit = png_ptr->downsample_height;
+
+   png_downsample_divmod(source_y, y_unit,
+       png_ptr->height, &target_y, &y_offset);
+
+   width = row_info->width;
+   channels = row_info->channels;
+
+   if (width != 0)
+   {
+      png_uint_32 source_x = pass_start_x;
+
+      png_downsample_divmod(source_x, x_unit,
+          png_ptr->width, &target_x, &x_offset);
+
+      for (i = 0; i < width; ++i)
+      {
+         png_uint_32 x_weights[2];
+         png_uint_32 y_weights[2];
+         png_uint_32 x_targets[2];
+         png_uint_32 y_targets[2];
+         unsigned int x_count = 1;
+         unsigned int y_count = 1;
+         unsigned int xi;
+         unsigned int yi;
+
+         x_weights[0] = x_unit;
+         x_targets[0] = target_x;
+         if (x_offset + x_unit > png_ptr->width)
+         {
+            x_weights[0] = png_ptr->width - x_offset;
+            x_weights[1] = x_offset + x_unit - png_ptr->width;
+            x_targets[1] = target_x + 1;
+            x_count = 2;
+         }
+
+         y_weights[0] = y_unit;
+         y_targets[0] = target_y;
+         if (y_offset + y_unit > png_ptr->height)
+         {
+            y_weights[0] = png_ptr->height - y_offset;
+            y_weights[1] = y_offset + y_unit - png_ptr->height;
+            y_targets[1] = target_y + 1;
+            y_count = 2;
+         }
+
+         for (yi = 0; yi < y_count; ++yi)
+         {
+            for (xi = 0; xi < x_count; ++xi)
+            {
+               png_alloc_size_t weight =
+                   (png_alloc_size_t)x_weights[xi] * y_weights[yi];
+               png_alloc_size_t index =
+                   ((png_alloc_size_t)y_targets[yi] *
+                    png_ptr->downsample_width + x_targets[xi]) * channels;
+               png_uint_32 channel;
+
+               if (y_targets[yi] >= png_ptr->downsample_height ||
+                   x_targets[xi] >= png_ptr->downsample_width)
+                  png_error(png_ptr, "downsampling target index overflow");
+
+               for (channel = 0; channel < channels; ++channel)
+               {
+                  png_uint_32 value;
+
+                  if (row_info->bit_depth == 8)
+                     value = row[(size_t)i * channels + channel];
+
+                  else
+                  {
+                     const png_byte *bp =
+                         row + ((size_t)i * channels + channel) * 2;
+
+                     if ((png_ptr->transformations & PNG_SWAP_BYTES) != 0)
+                        value = ((png_uint_32)bp[1] << 8) | bp[0];
+
+                     else
+                        value = ((png_uint_32)bp[0] << 8) | bp[1];
+                  }
+
+                  png_ptr->downsample_sum[index + channel] +=
+                      (png_alloc_size_t)value * weight;
+               }
+            }
+         }
+
+         steps = pass_inc_x;
+         while (steps-- > 0)
+         {
+            x_offset += x_unit;
+            if (x_offset >= png_ptr->width)
+            {
+               x_offset -= png_ptr->width;
+               target_x++;
+            }
+         }
+      }
+   }
+}
+
+void /* PRIVATE */
+png_downsample_finish(png_struct *png_ptr)
+{
+   png_alloc_size_t area;
+   png_alloc_size_t index;
+   png_uint_32 y;
+   png_uint_32 x;
+   png_uint_32 channels;
+
+   if (png_ptr->downsample_finished != 0)
+      return;
+
+   if (png_ptr->downsample_sum == NULL || png_ptr->downsample_image == NULL)
+      png_error(png_ptr, "downsampling was not initialized");
+
+   area = (png_alloc_size_t)png_ptr->width * png_ptr->height;
+   channels = png_ptr->downsample_channels;
+   index = 0;
+
+   for (y = 0; y < png_ptr->downsample_height; ++y)
+   {
+      png_byte *dp = png_ptr->downsample_image + y *
+          png_ptr->downsample_rowbytes;
+
+      for (x = 0; x < png_ptr->downsample_width; ++x)
+      {
+         png_uint_32 channel;
+
+         for (channel = 0; channel < channels; ++channel)
+         {
+            png_alloc_size_t value =
+                (png_ptr->downsample_sum[index++] + area / 2) / area;
+            png_uint_32 maximum =
+                png_ptr->downsample_bit_depth == 16 ? 65535U : 255U;
+
+            if (value > maximum)
+               value = maximum;
+
+            if (png_ptr->downsample_bit_depth == 16)
+            {
+               if ((png_ptr->transformations & PNG_SWAP_BYTES) != 0)
+               {
+                  *dp++ = (png_byte)(value & 0xff);
+                  *dp++ = (png_byte)(value >> 8);
+               }
+
+               else
+               {
+                  *dp++ = (png_byte)(value >> 8);
+                  *dp++ = (png_byte)(value & 0xff);
+               }
+            }
+
+            else
+               *dp++ = (png_byte)value;
+         }
+      }
+   }
+
+   png_free(png_ptr, png_ptr->downsample_sum);
+   png_ptr->downsample_sum = NULL;
+   png_ptr->downsample_finished = 1;
+}
+
+void /* PRIVATE */
+png_downsample_copy_row(png_struct *png_ptr, png_uint_32 row, png_byte *output)
+{
+   if (png_ptr->downsample_finished == 0 ||
+       row >= png_ptr->downsample_height)
+      png_error(png_ptr, "invalid downsampled row");
+
+   if (output != NULL)
+      memcpy(output, png_ptr->downsample_image + row *
+          png_ptr->downsample_rowbytes, png_ptr->downsample_rowbytes);
+}
+#endif /* READ_DOWNSAMPLE */
+
 void /* PRIVATE */
 png_read_finish_row(png_struct *png_ptr)
 {

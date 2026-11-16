@@ -207,6 +207,18 @@ struct png_struct_def
 #endif
    size_t info_rowbytes;      /* Added in 1.5.4: cache of updated row bytes */
 
+#ifdef PNG_READ_DOWNSAMPLE_SUPPORTED
+   png_uint_32 downsample_width;  /* requested output width, 0 if disabled */
+   png_uint_32 downsample_height; /* requested output height */
+   png_uint_32 downsample_row;    /* next output row to be returned */
+   size_t downsample_rowbytes;    /* bytes in one output row */
+   png_alloc_size_t *downsample_sum; /* target-sized accumulation buffer */
+   png_byte *downsample_image;    /* completed target-sized image */
+   png_byte downsample_channels;
+   png_byte downsample_bit_depth;
+   png_byte downsample_finished;
+#endif
+
    png_uint_32 idat_size;     /* current IDAT size for read */
    png_uint_32 crc;           /* current chunk CRC value */
    png_color *palette;        /* palette from the input file */

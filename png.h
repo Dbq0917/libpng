@@ -1291,6 +1291,41 @@ PNG_EXPORT(void, png_set_scale_16,
    (png_struct *png_ptr));
 #endif
 
+#ifdef PNG_READ_DOWNSAMPLE_SUPPORTED
+/* Request decoder-integrated downsampling.  This must be called after
+ * png_read_info and before png_read_update_info or png_start_read_image.
+ *
+ * The output dimensions are reported by png_read_update_info and
+ * png_get_image_width/height.  png_read_image reads exactly the requested
+ * number of output rows.  When using png_read_row or png_read_rows, call
+ * them once for each output row; the first call consumes and validates all
+ * source rows, including all Adam7 passes for interlaced images.
+ *
+ * Pixels are box-filtered in the transformed color space.  A 16-bit output
+ * retains 16-bit channels.  Palette, sub-8-bit grayscale and tRNS inputs are
+ * expanded to channel values before filtering.  The data is returned in the
+ * byte order selected by the read transforms and can be uploaded as a texture
+ * directly.
+ *
+ * No output rows are exposed until the complete IDAT stream has been decoded,
+ * so an error from a truncated or corrupt stream does not leave a partial
+ * image in application memory.
+ */
+PNG_EXPORT(void, png_set_downsample,
+   (png_struct *png_ptr, png_uint_32 width, png_uint_32 height));
+
+/* Return an estimate of the decoder working set needed by the current
+ * downsampling request, in bytes.  The estimate includes the target-sized
+ * accumulation buffer and completed output image.  It is intended for image
+ * queue admission control.  Returns 0 if downsampling is not enabled.
+ *
+ * Call this after png_read_update_info for an exact estimate; before that it
+ * conservatively assumes four 16-bit channels.
+ */
+PNG_EXPORT(size_t, png_get_downsample_memory,
+   (const png_struct *png_ptr));
+#endif
+
 #ifdef PNG_READ_STRIP_16_TO_8_SUPPORTED
 #define PNG_READ_16_TO_8_SUPPORTED /* Name prior to 1.5.4 */
 /* Strip the second byte of information from a 16-bit depth file. */

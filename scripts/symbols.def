@@ -229,6 +229,8 @@ EXPORTS
  png_set_alpha_mode
  png_set_alpha_mode_fixed
  png_set_scale_16
+ png_set_downsample
+ png_get_downsample_memory
  png_get_cHRM_XYZ
  png_get_cHRM_XYZ_fixed
  png_set_cHRM_XYZ

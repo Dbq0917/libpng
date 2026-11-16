@@ -372,8 +372,8 @@ png_do_read_intrapixel(png_row_info *row_info, png_byte *row)
 }
 #endif /* MNG_FEATURES */
 
-void
-png_read_row(png_struct *png_ptr, png_byte *row, png_byte *dsp_row)
+static void
+png_read_row_raw(png_struct *png_ptr, png_byte *row, png_byte *dsp_row)
 {
    png_row_info row_info;
 
@@ -580,6 +580,19 @@ png_read_row(png_struct *png_ptr, png_byte *row, png_byte *dsp_row)
    else if (png_ptr->transformed_pixel_depth != row_info.pixel_depth)
       png_error(png_ptr, "internal sequential row size calculation error");
 
+#ifdef PNG_READ_DOWNSAMPLE_SUPPORTED
+   if (png_ptr->downsample_width != 0)
+   {
+      png_downsample_row(png_ptr, &row_info, png_ptr->row_buf + 1);
+      png_read_finish_row(png_ptr);
+
+      if (png_ptr->read_row_fn != NULL)
+         (*(png_ptr->read_row_fn))(png_ptr, png_ptr->row_number, png_ptr->pass);
+
+      return;
+   }
+#endif
+
 #ifdef PNG_READ_INTERLACING_SUPPORTED
    /* Expand interlaced rows to full size */
    if (png_ptr->interlaced != 0 &&
@@ -609,6 +622,64 @@ png_read_row(png_struct *png_ptr, png_byte *row, png_byte *dsp_row)
 
    if (png_ptr->read_row_fn != NULL)
       (*(png_ptr->read_row_fn))(png_ptr, png_ptr->row_number, png_ptr->pass);
+}
+
+#ifdef PNG_READ_DOWNSAMPLE_SUPPORTED
+static void
+png_read_downsample_image(png_struct *png_ptr)
+{
+   if (png_ptr->interlaced != 0)
+   {
+      int pass;
+
+      for (pass = 0; pass < 7; ++pass)
+      {
+         png_uint_32 row;
+
+         for (row = 0; row < png_ptr->height; ++row)
+            png_read_row_raw(png_ptr, NULL, NULL);
+      }
+   }
+
+   else
+   {
+      png_uint_32 row;
+
+      for (row = 0; row < png_ptr->height; ++row)
+         png_read_row_raw(png_ptr, NULL, NULL);
+   }
+
+   png_downsample_finish(png_ptr);
+}
+#endif
+
+void
+png_read_row(png_struct *png_ptr, png_byte *row, png_byte *dsp_row)
+{
+   if (png_ptr == NULL)
+      return;
+
+#ifdef PNG_READ_DOWNSAMPLE_SUPPORTED
+   if (png_ptr->downsample_width != 0)
+   {
+      png_uint_32 output_row;
+
+      if (png_ptr->downsample_finished == 0)
+         png_read_downsample_image(png_ptr);
+
+      output_row = png_ptr->downsample_row++;
+      if (output_row >= png_ptr->downsample_height)
+         png_error(png_ptr, "Invalid attempt to read row data");
+
+      png_downsample_copy_row(png_ptr, output_row, row);
+      if (dsp_row != NULL && dsp_row != row)
+         png_downsample_copy_row(png_ptr, output_row, dsp_row);
+
+      return;
+   }
+#endif
+
+   png_read_row_raw(png_ptr, row, dsp_row);
 }
 #endif /* SEQUENTIAL_READ */
 
@@ -703,6 +774,25 @@ png_read_image(png_struct *png_ptr, png_byte **image)
 
    if (png_ptr == NULL)
       return;
+
+#ifdef PNG_READ_DOWNSAMPLE_SUPPORTED
+   if (png_ptr->downsample_width != 0)
+   {
+      if ((png_ptr->flags & PNG_FLAG_ROW_INIT) == 0)
+         png_start_read_image(png_ptr);
+
+      image_height = png_ptr->downsample_height;
+      rp = image;
+
+      for (i = 0; i < image_height; ++i)
+      {
+         png_read_row(png_ptr, *rp, NULL);
+         rp++;
+      }
+
+      return;
+   }
+#endif
 
 #ifdef PNG_READ_INTERLACING_SUPPORTED
    if ((png_ptr->flags & PNG_FLAG_ROW_INIT) == 0)
@@ -861,6 +951,13 @@ png_read_destroy(png_struct *png_ptr)
    png_ptr->big_prev_row = NULL;
    png_free(png_ptr, png_ptr->read_buffer);
    png_ptr->read_buffer = NULL;
+
+#ifdef PNG_READ_DOWNSAMPLE_SUPPORTED
+   png_free(png_ptr, png_ptr->downsample_sum);
+   png_ptr->downsample_sum = NULL;
+   png_free(png_ptr, png_ptr->downsample_image);
+   png_ptr->downsample_image = NULL;
+#endif
 
 #ifdef PNG_READ_QUANTIZE_SUPPORTED
    png_free(png_ptr, png_ptr->palette_lookup);

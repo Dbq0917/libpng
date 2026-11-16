@@ -1370,6 +1370,23 @@ PNG_INTERNAL_FUNCTION(void, png_read_start_row,
    (png_struct *png_ptr),
    PNG_EMPTY);
 
+#ifdef PNG_READ_DOWNSAMPLE_SUPPORTED
+/* Accumulate one transformed source row into the target-sized image. */
+PNG_INTERNAL_FUNCTION(void, png_downsample_row,
+   (png_struct *png_ptr, const png_row_info *row_info, const png_byte *row),
+   PNG_EMPTY);
+
+/* Normalize and complete the target image after all source rows are read. */
+PNG_INTERNAL_FUNCTION(void, png_downsample_finish,
+   (png_struct *png_ptr),
+   PNG_EMPTY);
+
+/* Copy a completed target row to an application-owned buffer. */
+PNG_INTERNAL_FUNCTION(void, png_downsample_copy_row,
+   (png_struct *png_ptr, png_uint_32 row, png_byte *output),
+   PNG_EMPTY);
+#endif
+
 PNG_INTERNAL_FUNCTION(int, png_zlib_inflate,
    (png_struct *png_ptr, int flush),
    PNG_EMPTY);

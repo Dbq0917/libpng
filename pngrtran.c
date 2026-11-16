@@ -179,6 +179,98 @@ png_set_scale_16(png_struct *png_ptr)
 }
 #endif
 
+#ifdef PNG_READ_DOWNSAMPLE_SUPPORTED
+void
+png_set_downsample(png_struct *png_ptr, png_uint_32 width, png_uint_32 height)
+{
+   png_debug(1, "in png_set_downsample");
+
+   if (png_rtran_ok(png_ptr, 1) == 0)
+      return;
+
+   if (width == 0 || height == 0)
+   {
+      png_app_error(png_ptr, "invalid downsampled image size");
+      return;
+   }
+
+   if (width > png_ptr->width || height > png_ptr->height)
+   {
+      png_app_error(png_ptr,
+          "downsampled image is larger than the source image");
+      return;
+   }
+
+   png_ptr->downsample_width = width;
+   png_ptr->downsample_height = height;
+   png_ptr->downsample_row = 0;
+   png_ptr->downsample_rowbytes = 0;
+   png_ptr->downsample_sum = NULL;
+   png_ptr->downsample_image = NULL;
+   png_ptr->downsample_channels = 0;
+   png_ptr->downsample_bit_depth = 0;
+   png_ptr->downsample_finished = 0;
+
+   /* Palette entries, packed samples and tRNS values cannot be averaged
+    * meaningfully before they have been expanded to channel values.
+    */
+   if (png_ptr->color_type == PNG_COLOR_TYPE_PALETTE ||
+       png_ptr->bit_depth < 8 || png_ptr->num_trans != 0)
+      png_set_expand(png_ptr);
+
+   /* The downsampler consumes the compact rows of every Adam7 pass. */
+   (void)png_set_interlace_handling(png_ptr);
+}
+
+size_t
+png_get_downsample_memory(const png_struct *png_ptr)
+{
+   png_alloc_size_t pixels;
+   png_alloc_size_t channels;
+   png_alloc_size_t sample_bytes;
+   png_alloc_size_t sum_bytes;
+   png_alloc_size_t image_bytes;
+   png_alloc_size_t rowbytes;
+
+   if (png_ptr == NULL || png_ptr->downsample_width == 0)
+      return 0;
+
+   if (png_ptr->downsample_height == 0 ||
+       png_ptr->downsample_width >
+           PNG_SIZE_MAX / png_ptr->downsample_height)
+      return PNG_SIZE_MAX;
+
+   pixels = (png_alloc_size_t)png_ptr->downsample_width *
+            png_ptr->downsample_height;
+   channels = png_ptr->downsample_channels;
+   if (channels == 0)
+      channels = 4;
+
+   if (png_ptr->downsample_bit_depth != 0)
+      sample_bytes = png_ptr->downsample_bit_depth > 8 ? 2 : 1;
+   else
+      sample_bytes = 2;
+   rowbytes = png_ptr->downsample_rowbytes;
+   if (rowbytes == 0)
+      rowbytes = PNG_ROWBYTES(channels * sample_bytes * 8,
+          png_ptr->downsample_width);
+
+   if (channels > PNG_SIZE_MAX / sizeof(png_alloc_size_t) ||
+       pixels > PNG_SIZE_MAX /
+           (channels * sizeof(png_alloc_size_t)) ||
+       rowbytes > PNG_SIZE_MAX / png_ptr->downsample_height)
+      return PNG_SIZE_MAX;
+
+   sum_bytes = pixels * channels * sizeof(png_alloc_size_t);
+   image_bytes = rowbytes * png_ptr->downsample_height;
+
+   if (sum_bytes > PNG_SIZE_MAX - image_bytes)
+      return PNG_SIZE_MAX;
+
+   return (size_t)/*SAFE*/(sum_bytes + image_bytes);
+}
+#endif
+
 #ifdef PNG_READ_STRIP_16_TO_8_SUPPORTED
 /* Chop 16-bit depth files to 8-bit depth */
 void
@@ -2247,6 +2339,18 @@ defined(PNG_READ_USER_TRANSFORM_SUPPORTED)
 
    info_ptr->pixel_depth = (png_byte)(info_ptr->channels *
        info_ptr->bit_depth);
+
+#ifdef PNG_READ_DOWNSAMPLE_SUPPORTED
+   if (png_ptr->downsample_width != 0)
+   {
+      info_ptr->width = png_ptr->downsample_width;
+      info_ptr->height = png_ptr->downsample_height;
+      png_ptr->downsample_channels = info_ptr->channels;
+      png_ptr->downsample_bit_depth = info_ptr->bit_depth;
+      png_ptr->downsample_rowbytes = PNG_ROWBYTES(info_ptr->pixel_depth,
+          info_ptr->width);
+   }
+#endif
 
    info_ptr->rowbytes = PNG_ROWBYTES(info_ptr->pixel_depth, info_ptr->width);
 

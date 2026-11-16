@@ -382,6 +382,9 @@ set(pngunknown_sources
 set(pngimage_sources
     contrib/libtests/pngimage.c
 )
+set(pngdownsample_sources
+    contrib/libtests/pngdownsample.c
+)
 
 # Now build our targets.
 
@@ -551,6 +554,14 @@ if(PNG_TESTS AND PNG_SHARED)
                COMMAND pngreadend
                FILES "${CMAKE_CURRENT_SOURCE_DIR}/contrib/testpngs/crashers/stale_zTXt_input.png"
                      "${CMAKE_CURRENT_SOURCE_DIR}/contrib/testpngs/crashers/stale_iCCP_input.png")
+
+  # Decoder-integrated downsampling tests:
+  add_executable(pngdownsample ${pngdownsample_sources})
+  target_link_libraries(pngdownsample
+                        PRIVATE png_shared)
+
+  png_add_test(NAME pngdownsample
+               COMMAND pngdownsample)
 
   # pngvalid tests:
   # Internal validation of standard and progressive reading,
